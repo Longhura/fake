@@ -21,14 +21,18 @@ local hideOffset = false
 local baseSpeed = 20
 local speedMultiplier = 1
 local verticalSpeed = 0
-local seaUpSpeed = 100
+local seaUpDistance = 1000 -- Khoảng cách dịch chuyển lên khi Sea kích hoạt
 local bodyGyro, bodyVelocity
+local noclipConnection = nil
+local seaConnection = nil
+local lastSeaTeleport = 0
+local seaTeleportCooldown = 0.1 -- Thời gian giữa các lần dịch chuyển (giây)
 
 -- Danh sách lệnh
 local commandList = {
     "/fly - Bật/tắt chế độ bay",
     "/phase - Xuyên qua tường",
-    "/sea - Tự động bay khi máu thấp",
+    "/sea - Tự động bay lên khi máu thấp",
     "/auto - Tự động đuổi mục tiêu",
     "/player - Chọn người chơi làm mục tiêu",
     "/hide - Ẩn phía sau mục tiêu",
@@ -184,6 +188,47 @@ local playerCorner = Instance.new("UICorner")
 playerCorner.CornerRadius = UDim.new(0, 5)
 playerCorner.Parent = PlayerButton
 
+-- Hiển thị thông báo
+local function showNotification(text, duration)
+    duration = duration or 3
+    
+    local notif = Instance.new("Frame")
+    notif.Name = "Notification"
+    notif.Size = UDim2.new(0, 200, 0, 50)
+    notif.Position = UDim2.new(0.5, -100, 0.8, 0)
+    notif.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+    notif.BackgroundTransparency = 0.2
+    notif.Parent = ScreenGui
+    
+    -- Làm tròn góc
+    local notifCorner = Instance.new("UICorner")
+    notifCorner.CornerRadius = UDim.new(0, 10)
+    notifCorner.Parent = notif
+    
+    local notifText = Instance.new("TextLabel")
+    notifText.Size = UDim2.new(1, -10, 1, -10)
+    notifText.Position = UDim2.new(0, 5, 0, 5)
+    notifText.BackgroundTransparency = 1
+    notifText.TextColor3 = Color3.fromRGB(255, 255, 255)
+    notifText.Text = text
+    notifText.TextWrapped = true
+    notifText.Font = Enum.Font.SourceSansBold
+    notifText.TextSize = 14
+    notifText.Parent = notif
+    
+    -- Hiệu ứng xuất hiện
+    notif.BackgroundTransparency = 1
+    TweenService:Create(notif, TweenInfo.new(0.5), {BackgroundTransparency = 0.2}):Play()
+    
+    -- Xóa thông báo sau thời gian
+    spawn(function()
+        wait(duration)
+        TweenService:Create(notif, TweenInfo.new(0.5), {BackgroundTransparency = 1}):Play()
+        wait(0.5)
+        notif:Destroy()
+    end)
+end
+
 -- Hiển thị danh sách người chơi
 local function showPlayerList()
     -- Xóa danh sách cũ nếu có
@@ -272,6 +317,7 @@ local function showPlayerList()
                 
                 -- Cập nhật nút chọn người chơi
                 PlayerButton.Text = "Mục Tiêu: " .. player.Name
+                showNotification("Đã chọn " .. player.Name .. " làm mục tiêu", 2)
             end)
             
             yOffset = yOffset + 35
@@ -287,6 +333,103 @@ local function showPlayerList()
     end)
 end
 
+-- Hàm bật/tắt xuyên tường (cải tiến)
+local function togglePhase()
+    phaseActive = not phaseActive
+    
+    if phaseActive then
+        Frame.PhaseButton.BackgroundColor3 = Color3.fromRGB(255, 0, 0)
+        showNotification("Đã bật chế độ xuyên tường", 2)
+        
+        -- Ngắt kết nối cũ nếu có
+        if noclipConnection then
+            noclipConnection:Disconnect()
+            noclipConnection = nil
+        end
+        
+        -- Tạo kết nối mới với RunService.Stepped
+        noclipConnection = RunService.Stepped:Connect(function()
+            if not Character or not phaseActive then return end
+            
+            for _, part in pairs(Character:GetDescendants()) do
+                if part:IsA("BasePart") and part.CanCollide then
+                    part.CanCollide = false
+                end
+            end
+        end)
+    else
+        Frame.PhaseButton.BackgroundColor3 = controlButtons[3].Color
+        showNotification("Đã tắt chế độ xuyên tường", 2)
+        
+        -- Ngắt kết nối nếu có
+        if noclipConnection then
+            noclipConnection:Disconnect()
+            noclipConnection = nil
+        end
+        
+        -- Khôi phục CanCollide
+        for _, part in pairs(Character:GetDescendants()) do
+            if part:IsA("BasePart") then
+                if part.Name == "HumanoidRootPart" or part.Name == "Head" then
+                    part.CanCollide = false
+                else
+                    part.CanCollide = true
+                end
+            end
+        end
+    end
+end
+
+-- Hàm bật/tắt chế độ SEA (cải tiến)
+local function toggleSea()
+    seaActive = not seaActive
+    
+    if seaActive then
+        Frame.SeaButton.BackgroundColor3 = Color3.fromRGB(0, 255, 255)
+        showNotification("Đã bật chế độ SEA - Tự động bay lên khi máu thấp", 2)
+        
+        -- Ngắt kết nối cũ nếu có
+        if seaConnection then
+            seaConnection:Disconnect()
+            seaConnection = nil
+        end
+        
+        -- Tạo kết nối mới
+        seaConnection = RunService.Heartbeat:Connect(function()
+            if not Character or not seaActive then return end
+            
+            -- Kiểm tra máu
+            if Humanoid.Health < (Humanoid.MaxHealth * 0.5) then
+                local currentTime = tick()
+                
+                -- Kiểm tra thời gian giữa các lần dịch chuyển
+                if currentTime - lastSeaTeleport >= seaTeleportCooldown then
+                    -- Dịch chuyển lên cao
+                    local newPosition = RootPart.Position + Vector3.new(0, seaUpDistance, 0)
+                    RootPart.CFrame = CFrame.new(newPosition)
+                    
+                    -- Cập nhật thời gian dịch chuyển
+                    lastSeaTeleport = currentTime
+                    
+                    -- Bật bay nếu chưa bật
+                    if not flying then
+                        toggleFly()
+                    end
+                end
+            end
+        end)
+    else
+        Frame.SeaButton.BackgroundColor3 = controlButtons[6].Color
+        showNotification("Đã tắt chế độ SEA", 2)
+        
+        -- Ngắt kết nối nếu có
+        if seaConnection then
+            seaConnection:Disconnect()
+            seaConnection = nil
+        end
+    end
+end
+
 -- Hàm bật/tắt bay
 local function toggleFly()
     flying = not flying
@@ -294,6 +437,7 @@ local function toggleFly()
     if flying then
         -- Bật bay
         Frame.FlyButton.BackgroundColor3 = Color3.fromRGB(0, 150, 255)
+        showNotification("Đã bật chế độ bay", 2)
         
         -- Tạo BodyGyro và BodyVelocity
         if bodyGyro then bodyGyro:Destroy() end
@@ -314,6 +458,7 @@ local function toggleFly()
     else
         -- Tắt bay
         Frame.FlyButton.BackgroundColor3 = controlButtons[1].Color
+        showNotification("Đã tắt chế độ bay", 2)
         
         -- Xóa BodyGyro và BodyVelocity
         if bodyGyro then bodyGyro:Destroy() end
@@ -331,34 +476,22 @@ local function toggleAuto()
     if autoPlay then
         Frame.AutoButton.BackgroundColor3 = Color3.fromRGB(0, 255, 0)
         
+        if selectedPlayer then
+            showNotification("Đã bật tự động bay đến " .. selectedPlayer.Name, 2)
+        else
+            showNotification("Vui lòng chọn người chơi làm mục tiêu trước", 2)
+            autoPlay = false
+            Frame.AutoButton.BackgroundColor3 = controlButtons[2].Color
+            return
+        end
+        
         -- Bật bay nếu chưa bật
         if not flying then
             toggleFly()
         end
     else
         Frame.AutoButton.BackgroundColor3 = controlButtons[2].Color
-    end
-end
-
--- Hàm bật/tắt xuyên tường
-local function togglePhase()
-    phaseActive = not phaseActive
-    
-    if phaseActive then
-        Frame.PhaseButton.BackgroundColor3 = Color3.fromRGB(255, 0, 0)
-    else
-        Frame.PhaseButton.BackgroundColor3 = controlButtons[3].Color
-    end
-end
-
--- Hàm bật/tắt chế độ SEA
-local function toggleSea()
-    seaActive = not seaActive
-    
-    if seaActive then
-        Frame.SeaButton.BackgroundColor3 = Color3.fromRGB(0, 255, 255)
-    else
-        Frame.SeaButton.BackgroundColor3 = controlButtons[6].Color
+        showNotification("Đã tắt tự động bay", 2)
     end
 end
 
@@ -402,24 +535,6 @@ local function updateFlight()
         -- Cập nhật hướng nhìn theo camera
         bodyGyro.CFrame = cam.CFrame
     end
-
-    -- Xử lý chế độ SEA (tự động bay lên khi máu thấp)
-    if seaActive and Humanoid.Health < (Humanoid.MaxHealth * 0.5) then
-        bodyVelocity.Velocity = Vector3.new(
-            bodyVelocity.Velocity.X,
-            seaUpSpeed,
-            bodyVelocity.Velocity.Z
-        )
-    end
-    
-    -- Xử lý xuyên tường
-    if phaseActive then
-        for _, part in pairs(Character:GetDescendants()) do
-            if part:IsA("BasePart") then
-                part.CanCollide = false
-            end
-        end
-    end
 end
 
 -- Xử lý sự kiện nút
@@ -453,11 +568,13 @@ end)
 MinusButton.MouseButton1Click:Connect(function()
     speedMultiplier = math.max(0.5, speedMultiplier - 0.5)
     SpeedLabel.Text = "Tốc độ: " .. baseSpeed * speedMultiplier
+    showNotification("Tốc độ: " .. baseSpeed * speedMultiplier, 1)
 end)
 
 PlusButton.MouseButton1Click:Connect(function()
     speedMultiplier = speedMultiplier + 0.5
     SpeedLabel.Text = "Tốc độ: " .. baseSpeed * speedMultiplier
+    showNotification("Tốc độ: " .. baseSpeed * speedMultiplier, 1)
 end)
 
 -- Xử lý nút chọn người chơi
@@ -479,12 +596,18 @@ Player.Chatted:Connect(function(msg)
         showPlayerList()
     elseif msg == "/hide" then
         hideOffset = not hideOffset
+        if hideOffset then
+            showNotification("Đã bật chế độ ẩn phía sau mục tiêu", 2)
+        else
+            showNotification("Đã tắt chế độ ẩn phía sau mục tiêu", 2)
+        end
     elseif msg == "/menu" then
         Frame.Visible = not Frame.Visible
     elseif msg == "/command" then
         for _, cmd in pairs(commandList) do
             print(cmd)
         end
+        showNotification("Đã hiển thị danh sách lệnh trong console (F9)", 2)
     end
 end)
 
@@ -498,6 +621,13 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
         togglePhase()
     elseif input.KeyCode == Enum.KeyCode.M then
         Frame.Visible = not Frame.Visible
+    elseif input.KeyCode == Enum.KeyCode.H then
+        hideOffset = not hideOffset
+        if hideOffset then
+            showNotification("Đã bật chế độ ẩn phía sau mục tiêu", 2)
+        else
+            showNotification("Đã tắt chế độ ẩn phía sau mục tiêu", 2)
+        end
     elseif input.KeyCode == Enum.KeyCode.Space and flying then
         verticalSpeed = baseSpeed * speedMultiplier
     elseif input.KeyCode == Enum.KeyCode.LeftShift and flying then
@@ -530,13 +660,26 @@ Humanoid.Died:Connect(function()
     flying = false
     autoPlay = false
     phaseActive = false
+    seaActive = false
     
     if bodyGyro then bodyGyro:Destroy() end
     if bodyVelocity then bodyVelocity:Destroy() end
     
+    -- Ngắt kết nối nếu có
+    if noclipConnection then
+        noclipConnection:Disconnect()
+        noclipConnection = nil
+    end
+    
+    if seaConnection then
+        seaConnection:Disconnect()
+        seaConnection = nil
+    end
+    
     Frame.FlyButton.BackgroundColor3 = controlButtons[1].Color
     Frame.AutoButton.BackgroundColor3 = controlButtons[2].Color
     Frame.PhaseButton.BackgroundColor3 = controlButtons[3].Color
+    Frame.SeaButton.BackgroundColor3 = controlButtons[6].Color
 end)
 
 -- Xử lý khi nhân vật được tạo lại
@@ -548,26 +691,54 @@ Player.CharacterAdded:Connect(function(newCharacter)
     flying = false
     autoPlay = false
     phaseActive = false
+    seaActive = false
+    
+    -- Ngắt kết nối nếu có
+    if noclipConnection then
+        noclipConnection:Disconnect()
+        noclipConnection = nil
+    end
+    
+    if seaConnection then
+        seaConnection:Disconnect()
+        seaConnection = nil
+    end
     
     Frame.FlyButton.BackgroundColor3 = controlButtons[1].Color
     Frame.AutoButton.BackgroundColor3 = controlButtons[2].Color
     Frame.PhaseButton.BackgroundColor3 = controlButtons[3].Color
+    Frame.SeaButton.BackgroundColor3 = controlButtons[6].Color
     
     -- Thiết lập lại sự kiện khi chết
     Humanoid.Died:Connect(function()
         flying = false
         autoPlay = false
         phaseActive = false
+        seaActive = false
         
         if bodyGyro then bodyGyro:Destroy() end
         if bodyVelocity then bodyVelocity:Destroy() end
         
+        -- Ngắt kết nối nếu có
+        if noclipConnection then
+            noclipConnection:Disconnect()
+            noclipConnection = nil
+        end
+        
+        if seaConnection then
+            seaConnection:Disconnect()
+            seaConnection = nil
+        end
+        
         Frame.FlyButton.BackgroundColor3 = controlButtons[1].Color
         Frame.AutoButton.BackgroundColor3 = controlButtons[2].Color
         Frame.PhaseButton.BackgroundColor3 = controlButtons[3].Color
+        Frame.SeaButton.BackgroundColor3 = controlButtons[6].Color
     end)
 end)
 
+-- Tạo thông báo khởi động
+showNotification("Hệ thống bay nâng cao đã được khởi tạo!", 3)
 print("Hệ thống bay nâng cao đã được khởi tạo!")
 print("Nhấn F để bật/tắt bay, P để xuyên tường, M để hiện/ẩn menu")
 print("Gõ /command để xem danh sách lệnh đầy đủ")
