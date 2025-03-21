@@ -27,7 +27,9 @@ local TELEPORT_HEIGHT = 1000
 local SPEED = 50
 local COMMANDS = {}
 local COMMAND_GUI_VISIBLE = false
+local GUI_VISIBLE = true
 local LAST_HEALTH = humanoid.Health
+local SEA_ACTIVE = false
 
 -- Create GUI
 local function createGui()
@@ -205,6 +207,9 @@ local function updateGui(gui)
     gui.flyStatus.TextColor3 = FLYING and Color3.fromRGB(0, 255, 0) or Color3.fromRGB(255, 255, 255)
     gui.noclipStatus.TextColor3 = NOCLIP and Color3.fromRGB(0, 255, 0) or Color3.fromRGB(255, 255, 255)
     gui.seaStatus.TextColor3 = SEA_MODE and Color3.fromRGB(0, 255, 0) or Color3.fromRGB(255, 255, 255)
+    
+    -- Update visibility
+    gui.statusFrame.Visible = GUI_VISIBLE
 end
 
 -- Populate command list
@@ -359,16 +364,18 @@ local function stopFlying()
     humanoid.AutoRotate = true
 end
 
--- Improved Noclip function
+-- Improved Noclip function - completely new implementation
 local function toggleNoclip()
     NOCLIP = not NOCLIP
     
     if NOCLIP then
-        -- Connect noclip function to RunService
-        local noclipConnection = RunService.Stepped:Connect(function()
-            if not NOCLIP then return end
-            
-            -- Set CanCollide to false for all character parts
+        -- Create a new connection for noclip
+        if character._noclipLoop then
+            character._noclipLoop:Disconnect()
+        end
+        
+        -- This is the improved noclip method that works more reliably
+        character._noclipLoop = RunService.Heartbeat:Connect(function()
             for _, part in pairs(character:GetDescendants()) do
                 if part:IsA("BasePart") then
                     part.CanCollide = false
@@ -376,64 +383,100 @@ local function toggleNoclip()
             end
         end)
         
-        -- Store connection in character for cleanup
-        character:SetAttribute("NoclipConnection", true)
-        character._noclipConnection = noclipConnection
-    else
-        -- Disconnect noclip function
-        if character._noclipConnection then
-            character._noclipConnection:Disconnect()
-            character._noclipConnection = nil
+        -- Also hook into Stepped for extra reliability
+        if character._noclipSteppedLoop then
+            character._noclipSteppedLoop:Disconnect()
         end
         
-        -- Reset collision
+        character._noclipSteppedLoop = RunService.Stepped:Connect(function()
+            for _, part in pairs(character:GetDescendants()) do
+                if part:IsA("BasePart") then
+                    part.CanCollide = false
+                end
+            end
+        end)
+        
+        -- Set character to noclip state
+        humanoid:ChangeState(Enum.HumanoidStateType.Physics)
+        
+        print("Noclip enabled - You can now pass through objects")
+    else
+        -- Disconnect noclip loops
+        if character._noclipLoop then
+            character._noclipLoop:Disconnect()
+            character._noclipLoop = nil
+        end
+        
+        if character._noclipSteppedLoop then
+            character._noclipSteppedLoop:Disconnect()
+            character._noclipSteppedLoop = nil
+        end
+        
+        -- Reset collision for parts except HumanoidRootPart
         for _, part in pairs(character:GetDescendants()) do
             if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
                 part.CanCollide = true
             end
         end
+        
+        -- Reset humanoid state
+        humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
+        
+        print("Noclip disabled - Normal collision restored")
     end
 end
 
--- SEA Mode (Save position and Emergency Ascent)
+-- SEA Mode (Save position and Emergency Ascent) - Completely revised
 local function toggleSeaMode()
     SEA_MODE = not SEA_MODE
     
     if not SEA_MODE then
         -- Disconnect health monitoring if it exists
-        if character._healthConnection then
-            character._healthConnection:Disconnect()
-            character._healthConnection = nil
+        if character._seaLoop then
+            character._seaLoop:Disconnect()
+            character._seaLoop = nil
         end
+        
+        SEA_ACTIVE = false
+        print("SEA Mode disabled")
     else
-        -- Connect health monitoring
-        character._healthConnection = humanoid:GetPropertyChangedSignal("Health"):Connect(function()
+        -- Connect health monitoring with continuous teleportation
+        if character._seaLoop then
+            character._seaLoop:Disconnect()
+        end
+        
+        character._seaLoop = RunService.Heartbeat:Connect(function()
             local currentHealth = humanoid.Health
             local maxHealth = humanoid.MaxHealth
             local healthPercent = (currentHealth / maxHealth) * 100
             
-            -- If health drops below threshold and we're not already ascending
-            if healthPercent <= LOW_HEALTH_THRESHOLD and LAST_HEALTH > currentHealth then
-                -- Save current position if not already saved
-                if not SAVED_POSITION then
+            -- If health drops below threshold
+            if healthPercent <= LOW_HEALTH_THRESHOLD then
+                -- Save current position if not already saved and not already in SEA mode
+                if not SAVED_POSITION and not SEA_ACTIVE then
                     SAVED_POSITION = rootPart.Position
                     print("Position saved at: " .. tostring(SAVED_POSITION))
+                    SEA_ACTIVE = true
                 end
                 
-                -- Teleport upward
-                rootPart.CFrame = CFrame.new(rootPart.Position.X, rootPart.Position.Y + TELEPORT_HEIGHT, rootPart.Position.Z)
+                -- Continuously teleport upward while health is low
+                if SEA_ACTIVE then
+                    rootPart.CFrame = CFrame.new(rootPart.Position.X, rootPart.Position.Y + TELEPORT_HEIGHT, rootPart.Position.Z)
+                    print("Emergency ascent - teleporting up by " .. TELEPORT_HEIGHT .. " studs")
+                end
             end
             
             -- If health recovers above threshold and we have a saved position
-            if healthPercent > LOW_HEALTH_THRESHOLD and SAVED_POSITION and LAST_HEALTH < currentHealth then
+            if healthPercent > LOW_HEALTH_THRESHOLD and SAVED_POSITION and SEA_ACTIVE then
                 -- Teleport back to saved position
                 rootPart.CFrame = CFrame.new(SAVED_POSITION)
-                print("Teleported back to saved position")
+                print("Health recovered - teleported back to saved position")
                 SAVED_POSITION = nil
+                SEA_ACTIVE = false
             end
-            
-            LAST_HEALTH = currentHealth
         end)
+        
+        print("SEA Mode enabled - Will teleport up when health drops below 50%")
     end
 end
 
@@ -462,7 +505,7 @@ local function setupCommands()
         },
         {
             name = "/sea",
-            description = "Toggle SEA mode (Save position & Emergency Ascent). When health drops below 50%, you'll teleport upward. When health recovers, you'll return to saved position.",
+            description = "Toggle SEA mode (Save position & Emergency Ascent). When health drops below 50%, you'll continuously teleport upward. When health recovers, you'll return to saved position.",
             action = function()
                 toggleSeaMode()
                 return "SEA Mode: " .. (SEA_MODE and "ON" or "OFF")
@@ -487,6 +530,22 @@ local function setupCommands()
             action = function()
                 COMMAND_GUI_VISIBLE = not COMMAND_GUI_VISIBLE
                 return "Command list: " .. (COMMAND_GUI_VISIBLE and "SHOWN" or "HIDDEN")
+            end
+        },
+        {
+            name = "/on",
+            description = "Show the status display in the top-left corner.",
+            action = function()
+                GUI_VISIBLE = true
+                return "Status display: SHOWN"
+            end
+        },
+        {
+            name = "/off",
+            description = "Hide the status display in the top-left corner.",
+            action = function()
+                GUI_VISIBLE = false
+                return "Status display: HIDDEN"
             end
         },
         {
@@ -582,6 +641,13 @@ local function setupKeyBindings()
             toggleSeaMode()
         end
     end, false, Enum.KeyCode.R)
+    
+    -- GUI visibility toggle (G key)
+    ContextActionService:BindAction("ToggleGUI", function(_, inputState)
+        if inputState == Enum.UserInputState.Begin then
+            GUI_VISIBLE = not GUI_VISIBLE
+        end
+    end, false, Enum.KeyCode.G)
 end
 
 -- Character handling
@@ -595,6 +661,7 @@ local function setupCharacter(char)
     FLYING = false
     NOCLIP = false
     SAVED_POSITION = nil
+    SEA_ACTIVE = false
     
     -- Reset SEA mode if it was enabled
     if SEA_MODE then
@@ -605,13 +672,17 @@ local function setupCharacter(char)
     -- Handle character death
     humanoid.Died:Connect(function()
         stopFlying()
-        if character._noclipConnection then
-            character._noclipConnection:Disconnect()
-            character._noclipConnection = nil
+        if character._noclipLoop then
+            character._noclipLoop:Disconnect()
+            character._noclipLoop = nil
         end
-        if character._healthConnection then
-            character._healthConnection:Disconnect()
-            character._healthConnection = nil
+        if character._noclipSteppedLoop then
+            character._noclipSteppedLoop:Disconnect()
+            character._noclipSteppedLoop = nil
+        end
+        if character._seaLoop then
+            character._seaLoop:Disconnect()
+            character._seaLoop = nil
         end
     end)
 end
@@ -649,6 +720,7 @@ local function initialize()
     
     print("Flying Script initialized successfully!")
     print("Press F to toggle flying, X for noclip, C for command list")
+    print("Use /command in chat to see all available commands")
 end
 
 -- Start the script
