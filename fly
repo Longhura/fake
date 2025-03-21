@@ -27,6 +27,8 @@ local noclipConnection = nil
 local seaConnection = nil
 local lastSeaTeleport = 0
 local seaTeleportCooldown = 0.1 -- Thời gian giữa các lần dịch chuyển (giây)
+local savedPosition = nil -- Lưu vị trí trước khi bay lên
+local isLowHealth = false -- Trạng thái máu thấp
 
 -- Danh sách lệnh
 local commandList = {
@@ -380,7 +382,7 @@ local function togglePhase()
     end
 end
 
--- Hàm bật/tắt chế độ SEA (cải tiến)
+-- Hàm bật/tắt chế độ SEA (cải tiến với lưu vị trí)
 local function toggleSea()
     seaActive = not seaActive
     
@@ -399,7 +401,13 @@ local function toggleSea()
             if not Character or not seaActive then return end
             
             -- Kiểm tra máu
-            if Humanoid.Health < (Humanoid.MaxHealth * 0.5) then
+            local healthPercent = Humanoid.Health / Humanoid.MaxHealth * 100
+            
+            if healthPercent < 50 and not isLowHealth then
+                -- Lưu vị trí hiện tại trước khi bay lên
+                savedPosition = RootPart.Position
+                isLowHealth = true
+                
                 local currentTime = tick()
                 
                 -- Kiểm tra thời gian giữa các lần dịch chuyển
@@ -415,7 +423,16 @@ local function toggleSea()
                     if not flying then
                         toggleFly()
                     end
+                    
+                    showNotification("Máu thấp! Đã bay lên để tránh nguy hiểm", 2)
                 end
+            elseif healthPercent > 51 and isLowHealth and savedPosition then
+                -- Máu đã hồi phục, quay lại vị trí cũ + 50 block
+                isLowHealth = false
+                local returnPosition = savedPosition + Vector3.new(0, 50, 0)
+                RootPart.CFrame = CFrame.new(returnPosition)
+                
+                showNotification("Máu đã hồi phục! Quay lại vị trí cũ + 50 block", 2)
             end
         end)
     else
@@ -427,6 +444,10 @@ local function toggleSea()
             seaConnection:Disconnect()
             seaConnection = nil
         end
+        
+        -- Reset biến
+        savedPosition = nil
+        isLowHealth = false
     end
 end
 
@@ -607,6 +628,9 @@ Player.Chatted:Connect(function(msg)
         for _, cmd in pairs(commandList) do
             print(cmd)
         end
+        showNotification("Đã hiển thị danh sách lệnh trong  do
+            print(cmd)
+        end
         showNotification("Đã hiển thị danh sách lệnh trong console (F9)", 2)
     end
 end)
@@ -676,6 +700,10 @@ Humanoid.Died:Connect(function()
         seaConnection = nil
     end
     
+    -- Reset biến
+    savedPosition = nil
+    isLowHealth = false
+    
     Frame.FlyButton.BackgroundColor3 = controlButtons[1].Color
     Frame.AutoButton.BackgroundColor3 = controlButtons[2].Color
     Frame.PhaseButton.BackgroundColor3 = controlButtons[3].Color
@@ -692,6 +720,10 @@ Player.CharacterAdded:Connect(function(newCharacter)
     autoPlay = false
     phaseActive = false
     seaActive = false
+    
+    -- Reset biến
+    savedPosition = nil
+    isLowHealth = false
     
     -- Ngắt kết nối nếu có
     if noclipConnection then
@@ -729,6 +761,10 @@ Player.CharacterAdded:Connect(function(newCharacter)
             seaConnection:Disconnect()
             seaConnection = nil
         end
+        
+        -- Reset biến
+        savedPosition = nil
+        isLowHealth = false
         
         Frame.FlyButton.BackgroundColor3 = controlButtons[1].Color
         Frame.AutoButton.BackgroundColor3 = controlButtons[2].Color
