@@ -27,6 +27,8 @@ local noclipConnection = nil
 local seaConnection = nil
 local lastSeaTeleport = 0
 local seaTeleportCooldown = 0.1 -- Thời gian giữa các lần dịch chuyển (giây)
+local savedPosition = nil -- Vị trí được lưu trước khi máu thấp
+local isLowHealth = false -- Trạng thái máu thấp
 
 -- Danh sách lệnh
 local commandList = {
@@ -333,13 +335,13 @@ local function showPlayerList()
     end)
 end
 
--- Hàm bật/tắt xuyên tường (cải tiến)
+-- Hàm bật/tắt xuyên tường (hoàn toàn mới)
 local function togglePhase()
     phaseActive = not phaseActive
     
     if phaseActive then
         Frame.PhaseButton.BackgroundColor3 = Color3.fromRGB(255, 0, 0)
-        showNotification("Đã bật chế độ xuyên tường", 2)
+        showNotification("Đã bật chế độ xuyên tường 100%", 2)
         
         -- Ngắt kết nối cũ nếu có
         if noclipConnection then
@@ -347,14 +349,20 @@ local function togglePhase()
             noclipConnection = nil
         end
         
-        -- Tạo kết nối mới với RunService.Stepped
-        noclipConnection = RunService.Stepped:Connect(function()
+        -- Tạo kết nối mới với RunService.Heartbeat để đảm bảo độ tin cậy cao nhất
+        noclipConnection = RunService.Heartbeat:Connect(function()
             if not Character or not phaseActive then return end
             
+            -- Đảm bảo tất cả các phần của nhân vật không va chạm
             for _, part in pairs(Character:GetDescendants()) do
-                if part:IsA("BasePart") and part.CanCollide then
+                if part:IsA("BasePart") then
                     part.CanCollide = false
                 end
+            end
+            
+            -- Đảm bảo HumanoidRootPart luôn không va chạm
+            if RootPart then
+                RootPart.CanCollide = false
             end
         end)
     else
@@ -367,7 +375,7 @@ local function togglePhase()
             noclipConnection = nil
         end
         
-        -- Khôi phục CanCollide
+        -- Khôi phục CanCollide cho các phần của nhân vật
         for _, part in pairs(Character:GetDescendants()) do
             if part:IsA("BasePart") then
                 if part.Name == "HumanoidRootPart" or part.Name == "Head" then
@@ -380,7 +388,7 @@ local function togglePhase()
     end
 end
 
--- Hàm bật/tắt chế độ SEA (cải tiến)
+-- Hàm bật/tắt chế độ SEA (cải tiến với lưu vị trí)
 local function toggleSea()
     seaActive = not seaActive
     
@@ -399,22 +407,45 @@ local function toggleSea()
             if not Character or not seaActive then return end
             
             -- Kiểm tra máu
-            if Humanoid.Health < (Humanoid.MaxHealth * 0.5) then
-                local currentTime = tick()
+            local healthPercent = Humanoid.Health / Humanoid.MaxHealth
+            
+            -- Nếu máu dưới 50% và chưa ở trạng thái máu thấp
+            if healthPercent < 0.5 and not isLowHealth then
+                -- Lưu vị trí hiện tại trước khi bay lên
+                savedPosition = RootPart.Position
+                isLowHealth = true
                 
-                -- Kiểm tra thời gian giữa các lần dịch chuyển
-                if currentTime - lastSeaTeleport >= seaTeleportCooldown then
-                    -- Dịch chuyển lên cao
-                    local newPosition = RootPart.Position + Vector3.new(0, seaUpDistance, 0)
-                    RootPart.CFrame = CFrame.new(newPosition)
+                -- Bật bay nếu chưa bật
+                if not flying then
+                    toggleFly()
+                end
+                
+                showNotification("Máu thấp! Đang bay lên cao...", 2)
+            end
+            
+            -- Nếu đang ở trạng thái máu thấp
+            if isLowHealth then
+                if healthPercent < 0.5 then
+                    local currentTime = tick()
                     
-                    -- Cập nhật thời gian dịch chuyển
-                    lastSeaTeleport = currentTime
-                    
-                    -- Bật bay nếu chưa bật
-                    if not flying then
-                        toggleFly()
+                    -- Kiểm tra thời gian giữa các lần dịch chuyển
+                    if currentTime - lastSeaTeleport >= seaTeleportCooldown then
+                        -- Dịch chuyển lên cao
+                        local newPosition = RootPart.Position + Vector3.new(0, seaUpDistance, 0)
+                        RootPart.CFrame = CFrame.new(newPosition)
+                        
+                        -- Cập nhật thời gian dịch chuyển
+                        lastSeaTeleport = currentTime
                     end
+                else
+                    -- Nếu máu đã trên 51%, dịch chuyển về vị trí đã lưu
+                    if savedPosition then
+                        RootPart.CFrame = CFrame.new(savedPosition)
+                        showNotification("Máu đã hồi phục! Đang trở về vị trí cũ...", 2)
+                        savedPosition = nil
+                    end
+                    
+                    isLowHealth = false
                 end
             end
         end)
@@ -427,6 +458,10 @@ local function toggleSea()
             seaConnection:Disconnect()
             seaConnection = nil
         end
+        
+        -- Đặt lại các biến
+        isLowHealth = false
+        savedPosition = nil
     end
 end
 
@@ -598,6 +633,9 @@ Player.Chatted:Connect(function(msg)
         hideOffset = not hideOffset
         if hideOffset then
             showNotification("Đã bật chế độ ẩn phía sau mục tiêu", 2)
+         = not hideOffset
+        if hideOffset then
+            showNotification("Đã bật chế độ ẩn phía sau mục tiêu", 2)
         else
             showNotification("Đã tắt chế độ ẩn phía sau mục tiêu", 2)
         end
@@ -661,6 +699,8 @@ Humanoid.Died:Connect(function()
     autoPlay = false
     phaseActive = false
     seaActive = false
+    isLowHealth = false
+    savedPosition = nil
     
     if bodyGyro then bodyGyro:Destroy() end
     if bodyVelocity then bodyVelocity:Destroy() end
@@ -692,6 +732,8 @@ Player.CharacterAdded:Connect(function(newCharacter)
     autoPlay = false
     phaseActive = false
     seaActive = false
+    isLowHealth = false
+    savedPosition = nil
     
     -- Ngắt kết nối nếu có
     if noclipConnection then
@@ -715,6 +757,8 @@ Player.CharacterAdded:Connect(function(newCharacter)
         autoPlay = false
         phaseActive = false
         seaActive = false
+        isLowHealth = false
+        savedPosition = nil
         
         if bodyGyro then bodyGyro:Destroy() end
         if bodyVelocity then bodyVelocity:Destroy() end
