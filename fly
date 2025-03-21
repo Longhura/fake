@@ -28,7 +28,7 @@ local seaConnection = nil
 local lastSeaTeleport = 0
 local seaTeleportCooldown = 0.1 -- Thời gian giữa các lần dịch chuyển (giây)
 local savedPosition = nil -- Lưu vị trí trước khi bay lên
-local isLowHealth = false -- Trạng thái máu thấp
+local isRecovering = false -- Trạng thái đang hồi phục
 
 -- Danh sách lệnh
 local commandList = {
@@ -382,7 +382,7 @@ local function togglePhase()
     end
 end
 
--- Hàm bật/tắt chế độ SEA (cải tiến với lưu vị trí)
+-- Hàm bật/tắt chế độ SEA (cải tiến với tính năng lưu vị trí)
 local function toggleSea()
     seaActive = not seaActive
     
@@ -401,12 +401,14 @@ local function toggleSea()
             if not Character or not seaActive then return end
             
             -- Kiểm tra máu
-            local healthPercent = Humanoid.Health / Humanoid.MaxHealth * 100
+            local healthPercent = (Humanoid.Health / Humanoid.MaxHealth) * 100
             
-            if healthPercent < 50 and not isLowHealth then
+            if healthPercent < 50 and not isRecovering then
                 -- Lưu vị trí hiện tại trước khi bay lên
-                savedPosition = RootPart.Position
-                isLowHealth = true
+                if not savedPosition then
+                    savedPosition = RootPart.Position
+                    showNotification("Đã lưu vị trí hiện tại", 1)
+                end
                 
                 local currentTime = tick()
                 
@@ -424,15 +426,18 @@ local function toggleSea()
                         toggleFly()
                     end
                     
-                    showNotification("Máu thấp! Đã bay lên để tránh nguy hiểm", 2)
+                    isRecovering = true
                 end
-            elseif healthPercent > 51 and isLowHealth and savedPosition then
-                -- Máu đã hồi phục, quay lại vị trí cũ + 50 block
-                isLowHealth = false
-                local returnPosition = savedPosition + Vector3.new(0, 50, 0)
+            elseif healthPercent > 51 and isRecovering and savedPosition then
+                -- Khi máu đã hồi phục và có vị trí đã lưu
+                local returnPosition = savedPosition + Vector3.new(0, 50, 0) -- Thêm 50 block theo trục Y
                 RootPart.CFrame = CFrame.new(returnPosition)
                 
-                showNotification("Máu đã hồi phục! Quay lại vị trí cũ + 50 block", 2)
+                showNotification("Đã trở về vị trí đã lưu (+ 50 block)", 2)
+                
+                -- Đặt lại biến
+                savedPosition = nil
+                isRecovering = false
             end
         end)
     else
@@ -445,9 +450,9 @@ local function toggleSea()
             seaConnection = nil
         end
         
-        -- Reset biến
+        -- Đặt lại biến
         savedPosition = nil
-        isLowHealth = false
+        isRecovering = false
     end
 end
 
@@ -628,9 +633,6 @@ Player.Chatted:Connect(function(msg)
         for _, cmd in pairs(commandList) do
             print(cmd)
         end
-        showNotification("Đã hiển thị danh sách lệnh trong  do
-            print(cmd)
-        end
         showNotification("Đã hiển thị danh sách lệnh trong console (F9)", 2)
     end
 end)
@@ -700,9 +702,9 @@ Humanoid.Died:Connect(function()
         seaConnection = nil
     end
     
-    -- Reset biến
+    -- Đặt lại biến
     savedPosition = nil
-    isLowHealth = false
+    isRecovering = false
     
     Frame.FlyButton.BackgroundColor3 = controlButtons[1].Color
     Frame.AutoButton.BackgroundColor3 = controlButtons[2].Color
@@ -721,9 +723,9 @@ Player.CharacterAdded:Connect(function(newCharacter)
     phaseActive = false
     seaActive = false
     
-    -- Reset biến
+    -- Đặt lại biến
     savedPosition = nil
-    isLowHealth = false
+    isRecovering = false
     
     -- Ngắt kết nối nếu có
     if noclipConnection then
@@ -762,9 +764,9 @@ Player.CharacterAdded:Connect(function(newCharacter)
             seaConnection = nil
         end
         
-        -- Reset biến
+        -- Đặt lại biến
         savedPosition = nil
-        isLowHealth = false
+        isRecovering = false
         
         Frame.FlyButton.BackgroundColor3 = controlButtons[1].Color
         Frame.AutoButton.BackgroundColor3 = controlButtons[2].Color
@@ -778,3 +780,4 @@ showNotification("Hệ thống bay nâng cao đã được khởi tạo!", 3)
 print("Hệ thống bay nâng cao đã được khởi tạo!")
 print("Nhấn F để bật/tắt bay, P để xuyên tường, M để hiện/ẩn menu")
 print("Gõ /command để xem danh sách lệnh đầy đủ")
+print("Đã thêm tính năng lưu vị trí khi bay lên do máu yếu và trở về khi hồi phục")
