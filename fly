@@ -8,7 +8,6 @@ local UserInputService = game:GetService("UserInputService")
 local ContextActionService = game:GetService("ContextActionService")
 local TweenService = game:GetService("TweenService")
 local CoreGui = game:GetService("CoreGui")
-local StarterGui = game:GetService("StarterGui")
 
 -- Variables
 local player = Players.LocalPlayer
@@ -23,38 +22,32 @@ local NOCLIP = false
 local SEA_MODE = false
 local AUTO_ACTIVATE = false
 local SAVED_POSITION = nil
-local LAST_HEALTH_PERCENT = 100
-local HEALTH_THRESHOLD = 50
+local LOW_HEALTH_THRESHOLD = 50
 local TELEPORT_HEIGHT = 1000
-local FLYING_SPEED = 50
-local BOOST_MULTIPLIER = 2
+local SPEED = 50
+local COMMANDS = {}
 local COMMAND_GUI_VISIBLE = false
-
--- Keybinds
-local FLY_KEY = Enum.KeyCode.F
-local BOOST_KEY = Enum.KeyCode.LeftShift
-local NOCLIP_KEY = Enum.KeyCode.X
-local SEA_KEY = Enum.KeyCode.C
-local COMMAND_KEY = Enum.KeyCode.Semicolon
+local LAST_HEALTH = humanoid.Health
 
 -- Create GUI
 local function createGui()
-    -- Check if GUI already exists in CoreGui
+    -- Check if GUI already exists
     if CoreGui:FindFirstChild("FlyingScriptGui") then
-        CoreGui.FlyingScriptGui:Destroy()
+        CoreGui:FindFirstChild("FlyingScriptGui"):Destroy()
     end
     
     local screenGui = Instance.new("ScreenGui")
     screenGui.Name = "FlyingScriptGui"
     screenGui.ResetOnSpawn = false
     
-    -- Try to use CoreGui for better persistence with executors
-    local success, err = pcall(function()
+    -- Try to use CoreGui for better persistence
+    pcall(function()
         screenGui.Parent = CoreGui
     end)
     
-    if not success then
-        screenGui.Parent = player.PlayerGui
+    -- Fallback to PlayerGui if CoreGui fails
+    if not screenGui.Parent then
+        screenGui.Parent = player:WaitForChild("PlayerGui")
     end
     
     -- Status Frame
@@ -75,58 +68,51 @@ local function createGui()
     -- Status Labels
     local flyStatus = Instance.new("TextLabel")
     flyStatus.Name = "FlyStatus"
-    flyStatus.Size = UDim2.new(1, 0, 0, 25)
-    flyStatus.Position = UDim2.new(0, 0, 0, 0)
+    flyStatus.Size = UDim2.new(1, -20, 0, 20)
+    flyStatus.Position = UDim2.new(0, 10, 0, 10)
     flyStatus.BackgroundTransparency = 1
     flyStatus.Text = "Flying: OFF"
     flyStatus.TextColor3 = Color3.fromRGB(255, 255, 255)
-    flyStatus.TextSize = 14
-    flyStatus.Font = Enum.Font.GothamBold
+    flyStatus.TextXAlignment = Enum.TextXAlignment.Left
+    flyStatus.Font = Enum.Font.SourceSansBold
+    flyStatus.TextSize = 16
     flyStatus.Parent = statusFrame
     
     local noclipStatus = Instance.new("TextLabel")
     noclipStatus.Name = "NoclipStatus"
-    noclipStatus.Size = UDim2.new(1, 0, 0, 25)
-    noclipStatus.Position = UDim2.new(0, 0, 0, 25)
+    noclipStatus.Size = UDim2.new(1, -20, 0, 20)
+    noclipStatus.Position = UDim2.new(0, 10, 0, 35)
     noclipStatus.BackgroundTransparency = 1
-    noclipStatus.Text = "Phase: OFF"
+    noclipStatus.Text = "Noclip: OFF"
     noclipStatus.TextColor3 = Color3.fromRGB(255, 255, 255)
-    noclipStatus.TextSize = 14
-    noclipStatus.Font = Enum.Font.GothamBold
+    noclipStatus.TextXAlignment = Enum.TextXAlignment.Left
+    noclipStatus.Font = Enum.Font.SourceSansBold
+    noclipStatus.TextSize = 16
     noclipStatus.Parent = statusFrame
     
     local seaStatus = Instance.new("TextLabel")
     seaStatus.Name = "SeaStatus"
-    seaStatus.Size = UDim2.new(1, 0, 0, 25)
-    seaStatus.Position = UDim2.new(0, 0, 0, 50)
+    seaStatus.Size = UDim2.new(1, -20, 0, 20)
+    seaStatus.Position = UDim2.new(0, 10, 0, 60)
     seaStatus.BackgroundTransparency = 1
     seaStatus.Text = "SEA Mode: OFF"
     seaStatus.TextColor3 = Color3.fromRGB(255, 255, 255)
-    seaStatus.TextSize = 14
-    seaStatus.Font = Enum.Font.GothamBold
+    seaStatus.TextXAlignment = Enum.TextXAlignment.Left
+    seaStatus.Font = Enum.Font.SourceSansBold
+    seaStatus.TextSize = 16
     seaStatus.Parent = statusFrame
     
     local speedLabel = Instance.new("TextLabel")
     speedLabel.Name = "SpeedLabel"
-    speedLabel.Size = UDim2.new(1, 0, 0, 25)
-    speedLabel.Position = UDim2.new(0, 0, 0, 75)
+    speedLabel.Size = UDim2.new(1, -20, 0, 20)
+    speedLabel.Position = UDim2.new(0, 10, 0, 85)
     speedLabel.BackgroundTransparency = 1
-    speedLabel.Text = "Speed: " .. FLYING_SPEED
+    speedLabel.Text = "Speed: " .. SPEED
     speedLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-    speedLabel.TextSize = 14
-    speedLabel.Font = Enum.Font.GothamBold
+    speedLabel.TextXAlignment = Enum.TextXAlignment.Left
+    speedLabel.Font = Enum.Font.SourceSansBold
+    speedLabel.TextSize = 16
     speedLabel.Parent = statusFrame
-    
-    local healthLabel = Instance.new("TextLabel")
-    healthLabel.Name = "HealthLabel"
-    healthLabel.Size = UDim2.new(1, 0, 0, 25)
-    healthLabel.Position = UDim2.new(0, 0, 0, 100)
-    healthLabel.BackgroundTransparency = 1
-    healthLabel.Text = "Health: 100%"
-    healthLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-    healthLabel.TextSize = 14
-    healthLabel.Font = Enum.Font.GothamBold
-    healthLabel.Parent = statusFrame
     
     -- Command List GUI
     local commandFrame = Instance.new("Frame")
@@ -150,11 +136,10 @@ local function createGui()
     titleLabel.Size = UDim2.new(1, 0, 0, 40)
     titleLabel.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
     titleLabel.BackgroundTransparency = 0.2
-    titleLabel.BorderSizePixel = 0
     titleLabel.Text = "Command List"
     titleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-    titleLabel.TextSize = 18
-    titleLabel.Font = Enum.Font.GothamBold
+    titleLabel.Font = Enum.Font.SourceSansBold
+    titleLabel.TextSize = 20
     titleLabel.Parent = commandFrame
     
     -- Round corners for title
@@ -170,8 +155,8 @@ local function createGui()
     closeButton.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
     closeButton.Text = "X"
     closeButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-    closeButton.TextSize = 16
-    closeButton.Font = Enum.Font.GothamBold
+    closeButton.Font = Enum.Font.SourceSansBold
+    closeButton.TextSize = 18
     closeButton.Parent = titleLabel
     
     -- Round corners for close button
@@ -179,7 +164,7 @@ local function createGui()
     closeCorner.CornerRadius = UDim.new(0, 15)
     closeCorner.Parent = closeButton
     
-    -- Scroll Frame for commands
+    -- Scrolling frame for commands
     local scrollFrame = Instance.new("ScrollingFrame")
     scrollFrame.Name = "ScrollFrame"
     scrollFrame.Size = UDim2.new(1, -20, 1, -50)
@@ -187,366 +172,484 @@ local function createGui()
     scrollFrame.BackgroundTransparency = 1
     scrollFrame.BorderSizePixel = 0
     scrollFrame.ScrollBarThickness = 6
-    scrollFrame.ScrollBarImageColor3 = Color3.fromRGB(100, 100, 100)
-    scrollFrame.CanvasSize = UDim2.new(0, 0, 0, 600) -- Will be updated
+    scrollFrame.ScrollingDirection = Enum.ScrollingDirection.Y
+    scrollFrame.CanvasSize = UDim2.new(0, 0, 0, 0) -- Will be updated dynamically
     scrollFrame.Parent = commandFrame
     
-    -- Command descriptions
-    local commandsText = [[
-<b>FLYING SCRIPT COMMANDS</b>
-
-<b>CHAT COMMANDS:</b>
-/fly - Toggle flying mode
-/speed [number] - Set flying speed
-/phase - Toggle phase/noclip mode
-/sea - Toggle SEA mode (auto-ascend at low health)
-/command - Show/hide this command list
-
-<b>KEYBOARD SHORTCUTS:</b>
-F - Toggle flying mode
-X - Toggle phase/noclip mode
-C - Toggle SEA mode
-Left Shift - Boost speed while flying
-; (semicolon) - Show/hide command list
-
-<b>FLYING CONTROLS:</b>
-W/A/S/D - Move in respective directions
-Space - Move up
-Left Ctrl - Move down
-Left Shift - Boost speed (hold)
-
-<b>SPECIAL FEATURES:</b>
-- Phase mode allows you to pass through all objects
-- SEA mode automatically teleports you upward when health drops below 50%
-- When health recovers above 51%, you'll teleport back to your saved position
-- Speed can be adjusted from 10 to 500
-
-<b>TIPS:</b>
-- Use phase mode to escape dangerous situations
-- SEA mode is perfect for emergency escapes
-- Combine flying with phase for maximum mobility
-- Press F twice quickly to reset flying position
-]]
-
-    local textLabel = Instance.new("TextLabel")
-    textLabel.Name = "CommandsText"
-    textLabel.Size = UDim2.new(1, 0, 1, 0)
-    textLabel.BackgroundTransparency = 1
-    textLabel.Text = commandsText
-    textLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-    textLabel.TextSize = 14
-    textLabel.Font = Enum.Font.Gotham
-    textLabel.TextXAlignment = Enum.TextXAlignment.Left
-    textLabel.TextYAlignment = Enum.TextYAlignment.Top
-    textLabel.RichText = true
-    textLabel.TextWrapped = true
-    textLabel.Parent = scrollFrame
-    
-    -- Close button event
+    -- Close button functionality
     closeButton.MouseButton1Click:Connect(function()
         commandFrame.Visible = false
         COMMAND_GUI_VISIBLE = false
     end)
     
     return {
+        screenGui = screenGui,
         statusFrame = statusFrame,
         flyStatus = flyStatus,
         noclipStatus = noclipStatus,
         seaStatus = seaStatus,
         speedLabel = speedLabel,
-        healthLabel = healthLabel,
-        commandFrame = commandFrame
+        commandFrame = commandFrame,
+        scrollFrame = scrollFrame
     }
 end
 
--- Flying mechanics
-local flyGyro, flyVel
-local function setupFly()
-    local torso = character:FindFirstChild("HumanoidRootPart")
-    if not torso then return end
+-- Update GUI
+local function updateGui(gui)
+    gui.flyStatus.Text = "Flying: " .. (FLYING and "ON" or "OFF")
+    gui.noclipStatus.Text = "Noclip: " .. (NOCLIP and "ON" or "OFF")
+    gui.seaStatus.Text = "SEA Mode: " .. (SEA_MODE and "ON" or "OFF")
+    gui.speedLabel.Text = "Speed: " .. SPEED
     
-    -- Clean up existing instances
-    if flyGyro then flyGyro:Destroy() end
-    if flyVel then flyVel:Destroy() end
-    
-    flyGyro = Instance.new("BodyGyro")
-    flyGyro.P = 9e4
-    flyGyro.maxTorque = Vector3.new(9e9, 9e9, 9e9)
-    flyGyro.CFrame = torso.CFrame
-    flyGyro.Parent = torso
-    
-    flyVel = Instance.new("BodyVelocity")
-    flyVel.MaxForce = Vector3.new(9e9, 9e9, 9e9)
-    flyVel.Velocity = Vector3.new(0, 0.1, 0)
-    flyVel.Parent = torso
-    
-    -- Update GUI
-    local gui = CoreGui:FindFirstChild("FlyingScriptGui")
-    if gui then
-        gui.StatusFrame.FlyStatus.Text = "Flying: ON"
-        gui.StatusFrame.FlyStatus.TextColor3 = Color3.fromRGB(0, 255, 0)
-    end
+    -- Update colors
+    gui.flyStatus.TextColor3 = FLYING and Color3.fromRGB(0, 255, 0) or Color3.fromRGB(255, 255, 255)
+    gui.noclipStatus.TextColor3 = NOCLIP and Color3.fromRGB(0, 255, 0) or Color3.fromRGB(255, 255, 255)
+    gui.seaStatus.TextColor3 = SEA_MODE and Color3.fromRGB(0, 255, 0) or Color3.fromRGB(255, 255, 255)
 end
 
-local function stopFly()
-    if flyGyro then flyGyro:Destroy() end
-    if flyVel then flyVel:Destroy() end
+-- Populate command list
+local function populateCommandList(gui)
+    local scrollFrame = gui.scrollFrame
     
-    flyGyro = nil
-    flyVel = nil
-    
-    -- Update GUI
-    local gui = CoreGui:FindFirstChild("FlyingScriptGui")
-    if gui then
-        gui.StatusFrame.FlyStatus.Text = "Flying: OFF"
-        gui.StatusFrame.FlyStatus.TextColor3 = Color3.fromRGB(255, 255, 255)
-    end
-end
-
--- Enhanced Noclip function
-local function updateNoclip()
-    if not character then return end
-    
-    for _, part in pairs(character:GetDescendants()) do
-        if part:IsA("BasePart") then
-            part.CanCollide = not NOCLIP
-        end
+    -- Clear existing items
+    for _, child in pairs(scrollFrame:GetChildren()) do
+        child:Destroy()
     end
     
-    -- Update GUI
-    local gui = CoreGui:FindFirstChild("FlyingScriptGui")
-    if gui then
-        gui.StatusFrame.NoclipStatus.Text = "Phase: " .. (NOCLIP and "ON" or "OFF")
-        gui.StatusFrame.NoclipStatus.TextColor3 = NOCLIP and Color3.fromRGB(0, 255, 0) or Color3.fromRGB(255, 255, 255)
-    end
-end
-
--- SEA Mode function
-local function updateSeaMode()
-    -- Update GUI
-    local gui = CoreGui:FindFirstChild("FlyingScriptGui")
-    if gui then
-        gui.StatusFrame.SeaStatus.Text = "SEA Mode: " .. (SEA_MODE and "ON" or "OFF")
-        gui.StatusFrame.SeaStatus.TextColor3 = SEA_MODE and Color3.fromRGB(0, 255, 0) or Color3.fromRGB(255, 255, 255)
-    end
-end
-
--- Toggle command list
-local function toggleCommandList()
-    COMMAND_GUI_VISIBLE = not COMMAND_GUI_VISIBLE
+    -- Add command descriptions
+    local yOffset = 5
+    local padding = 10
     
-    local gui = CoreGui:FindFirstChild("FlyingScriptGui")
-    if gui then
-        gui.CommandFrame.Visible = COMMAND_GUI_VISIBLE
-    end
-end
-
--- Process chat commands
-local function onChatted(message)
-    local lowerMsg = message:lower()
-    
-    if lowerMsg == "/fly" then
-        FLYING = not FLYING
-        if FLYING then
-            setupFly()
-        else
-            stopFly()
-        end
-    elseif lowerMsg:sub(1, 7) == "/speed " then
-        local speedStr = lowerMsg:sub(8)
-        local speed = tonumber(speedStr)
+    for _, cmd in ipairs(COMMANDS) do
+        local cmdFrame = Instance.new("Frame")
+        cmdFrame.Name = cmd.name .. "Frame"
+        cmdFrame.Size = UDim2.new(1, -10, 0, 70)
+        cmdFrame.Position = UDim2.new(0, 5, 0, yOffset)
+        cmdFrame.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+        cmdFrame.BackgroundTransparency = 0.3
+        cmdFrame.BorderSizePixel = 0
+        cmdFrame.Parent = scrollFrame
         
-        if speed then
-            FLYING_SPEED = math.clamp(speed, 10, 500)
+        -- Round corners
+        local cmdCorner = Instance.new("UICorner")
+        cmdCorner.CornerRadius = UDim.new(0, 6)
+        cmdCorner.Parent = cmdFrame
+        
+        -- Command name
+        local nameLabel = Instance.new("TextLabel")
+        nameLabel.Name = "NameLabel"
+        nameLabel.Size = UDim2.new(1, -10, 0, 20)
+        nameLabel.Position = UDim2.new(0, 5, 0, 5)
+        nameLabel.BackgroundTransparency = 1
+        nameLabel.Text = cmd.name
+        nameLabel.TextColor3 = Color3.fromRGB(255, 255, 100)
+        nameLabel.TextXAlignment = Enum.TextXAlignment.Left
+        nameLabel.Font = Enum.Font.SourceSansBold
+        nameLabel.TextSize = 16
+        nameLabel.Parent = cmdFrame
+        
+        -- Command description
+        local descLabel = Instance.new("TextLabel")
+        descLabel.Name = "DescLabel"
+        descLabel.Size = UDim2.new(1, -10, 0, 40)
+        descLabel.Position = UDim2.new(0, 5, 0, 25)
+        descLabel.BackgroundTransparency = 1
+        descLabel.Text = cmd.description
+        descLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+        descLabel.TextXAlignment = Enum.TextXAlignment.Left
+        descLabel.TextYAlignment = Enum.TextYAlignment.Top
+        descLabel.TextWrapped = true
+        descLabel.Font = Enum.Font.SourceSans
+        descLabel.TextSize = 14
+        descLabel.Parent = cmdFrame
+        
+        yOffset = yOffset + cmdFrame.Size.Y.Offset + padding
+    end
+    
+    -- Update canvas size
+    scrollFrame.CanvasSize = UDim2.new(0, 0, 0, yOffset)
+end
+
+-- Flying functions
+local function startFlying()
+    if FLYING then return end
+    
+    FLYING = true
+    
+    -- Disable auto-rotation
+    humanoid.AutoRotate = false
+    
+    -- Create necessary body movers
+    local bodyGyro = Instance.new("BodyGyro")
+    bodyGyro.Name = "FlyGyro"
+    bodyGyro.P = 9e4
+    bodyGyro.maxTorque = Vector3.new(9e9, 9e9, 9e9)
+    bodyGyro.CFrame = rootPart.CFrame
+    bodyGyro.Parent = rootPart
+    
+    local bodyVelocity = Instance.new("BodyVelocity")
+    bodyVelocity.Name = "FlyVelocity"
+    bodyVelocity.Velocity = Vector3.new(0, 0.1, 0)
+    bodyVelocity.MaxForce = Vector3.new(9e9, 9e9, 9e9)
+    bodyVelocity.Parent = rootPart
+    
+    -- Flying loop
+    RunService:BindToRenderStep("Flying", Enum.RenderPriority.Character.Value, function()
+        if not FLYING then return end
+        
+        local lookVector = camera.CFrame.LookVector
+        local rightVector = camera.CFrame.RightVector
+        local upVector = camera.CFrame.UpVector
+        
+        -- Calculate movement direction
+        local moveDirection = Vector3.new(0, 0, 0)
+        
+        if UserInputService:IsKeyDown(Enum.KeyCode.W) then
+            moveDirection = moveDirection + lookVector
+        end
+        if UserInputService:IsKeyDown(Enum.KeyCode.S) then
+            moveDirection = moveDirection - lookVector
+        end
+        if UserInputService:IsKeyDown(Enum.KeyCode.A) then
+            moveDirection = moveDirection - rightVector
+        end
+        if UserInputService:IsKeyDown(Enum.KeyCode.D) then
+            moveDirection = moveDirection + rightVector
+        end
+        if UserInputService:IsKeyDown(Enum.KeyCode.Space) then
+            moveDirection = moveDirection + upVector
+        end
+        if UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) then
+            moveDirection = moveDirection - upVector
+        end
+        
+        -- Normalize direction if it's not zero
+        if moveDirection.Magnitude > 0 then
+            moveDirection = moveDirection.Unit
+        end
+        
+        -- Apply velocity
+        bodyVelocity.Velocity = moveDirection * SPEED
+        
+        -- Update orientation
+        if moveDirection.Magnitude > 0 then
+            bodyGyro.CFrame = CFrame.lookAt(rootPart.Position, rootPart.Position + moveDirection)
+        else
+            bodyGyro.CFrame = CFrame.lookAt(rootPart.Position, rootPart.Position + lookVector)
+        end
+    end)
+end
+
+local function stopFlying()
+    if not FLYING then return end
+    
+    FLYING = false
+    
+    -- Unbind flying loop
+    RunService:UnbindFromRenderStep("Flying")
+    
+    -- Remove body movers
+    for _, child in pairs(rootPart:GetChildren()) do
+        if child:IsA("BodyGyro") or child:IsA("BodyVelocity") then
+            child:Destroy()
+        end
+    end
+    
+    -- Re-enable auto-rotation
+    humanoid.AutoRotate = true
+end
+
+-- Improved Noclip function
+local function toggleNoclip()
+    NOCLIP = not NOCLIP
+    
+    if NOCLIP then
+        -- Connect noclip function to RunService
+        local noclipConnection = RunService.Stepped:Connect(function()
+            if not NOCLIP then return end
             
-            -- Update GUI
-            local gui = CoreGui:FindFirstChild("FlyingScriptGui")
-            if gui then
-                gui.StatusFrame.SpeedLabel.Text = "Speed: " .. FLYING_SPEED
+            -- Set CanCollide to false for all character parts
+            for _, part in pairs(character:GetDescendants()) do
+                if part:IsA("BasePart") then
+                    part.CanCollide = false
+                end
+            end
+        end)
+        
+        -- Store connection in character for cleanup
+        character:SetAttribute("NoclipConnection", true)
+        character._noclipConnection = noclipConnection
+    else
+        -- Disconnect noclip function
+        if character._noclipConnection then
+            character._noclipConnection:Disconnect()
+            character._noclipConnection = nil
+        end
+        
+        -- Reset collision
+        for _, part in pairs(character:GetDescendants()) do
+            if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
+                part.CanCollide = true
             end
         end
-    elseif lowerMsg == "/phase" then
-        NOCLIP = not NOCLIP
-        updateNoclip()
-    elseif lowerMsg == "/sea" then
-        SEA_MODE = not SEA_MODE
-        updateSeaMode()
-    elseif lowerMsg == "/command" then
-        toggleCommandList()
     end
 end
 
--- Health monitoring for SEA mode
-local function monitorHealth()
-    if not character or not humanoid then return end
+-- SEA Mode (Save position and Emergency Ascent)
+local function toggleSeaMode()
+    SEA_MODE = not SEA_MODE
     
-    local currentHealth = humanoid.Health
-    local maxHealth = humanoid.MaxHealth
-    local healthPercent = math.floor((currentHealth / maxHealth) * 100)
-    
-    -- Update health display
-    local gui = CoreGui:FindFirstChild("FlyingScriptGui")
-    if gui then
-        gui.StatusFrame.HealthLabel.Text = "Health: " .. healthPercent .. "%"
-        
-        -- Change color based on health
-        if healthPercent < 30 then
-            gui.StatusFrame.HealthLabel.TextColor3 = Color3.fromRGB(255, 0, 0)
-        elseif healthPercent < 70 then
-            gui.StatusFrame.HealthLabel.TextColor3 = Color3.fromRGB(255, 255, 0)
-        else
-            gui.StatusFrame.HealthLabel.TextColor3 = Color3.fromRGB(0, 255, 0)
+    if not SEA_MODE then
+        -- Disconnect health monitoring if it exists
+        if character._healthConnection then
+            character._healthConnection:Disconnect()
+            character._healthConnection = nil
         end
-    end
-    
-    -- SEA mode logic
-    if SEA_MODE then
-        -- If health drops below threshold and we haven't saved position yet
-        if healthPercent <= HEALTH_THRESHOLD and LAST_HEALTH_PERCENT > HEALTH_THRESHOLD then
-            -- Save current position before teleporting up
-            SAVED_POSITION = rootPart.CFrame
+    else
+        -- Connect health monitoring
+        character._healthConnection = humanoid:GetPropertyChangedSignal("Health"):Connect(function()
+            local currentHealth = humanoid.Health
+            local maxHealth = humanoid.MaxHealth
+            local healthPercent = (currentHealth / maxHealth) * 100
             
-            -- Teleport upward
-            rootPart.CFrame = CFrame.new(rootPart.Position.X, rootPart.Position.Y + TELEPORT_HEIGHT, rootPart.Position.Z)
+            -- If health drops below threshold and we're not already ascending
+            if healthPercent <= LOW_HEALTH_THRESHOLD and LAST_HEALTH > currentHealth then
+                -- Save current position if not already saved
+                if not SAVED_POSITION then
+                    SAVED_POSITION = rootPart.Position
+                    print("Position saved at: " .. tostring(SAVED_POSITION))
+                end
+                
+                -- Teleport upward
+                rootPart.CFrame = CFrame.new(rootPart.Position.X, rootPart.Position.Y + TELEPORT_HEIGHT, rootPart.Position.Z)
+            end
+            
+            -- If health recovers above threshold and we have a saved position
+            if healthPercent > LOW_HEALTH_THRESHOLD and SAVED_POSITION and LAST_HEALTH < currentHealth then
+                -- Teleport back to saved position
+                rootPart.CFrame = CFrame.new(SAVED_POSITION)
+                print("Teleported back to saved position")
+                SAVED_POSITION = nil
+            end
+            
+            LAST_HEALTH = currentHealth
+        end)
+    end
+end
+
+-- Command handling
+local function setupCommands()
+    COMMANDS = {
+        {
+            name = "/fly",
+            description = "Toggle flying mode. You can also use the F key.",
+            action = function()
+                if FLYING then
+                    stopFlying()
+                else
+                    startFlying()
+                end
+                return "Flying: " .. (FLYING and "ON" or "OFF")
+            end
+        },
+        {
+            name = "/noclip or /phase",
+            description = "Toggle noclip/phase mode to pass through objects. You can also use the X key.",
+            action = function()
+                toggleNoclip()
+                return "Noclip: " .. (NOCLIP and "ON" or "OFF")
+            end
+        },
+        {
+            name = "/sea",
+            description = "Toggle SEA mode (Save position & Emergency Ascent). When health drops below 50%, you'll teleport upward. When health recovers, you'll return to saved position.",
+            action = function()
+                toggleSeaMode()
+                return "SEA Mode: " .. (SEA_MODE and "ON" or "OFF")
+            end
+        },
+        {
+            name = "/speed [number]",
+            description = "Set flying speed (10-500). Example: /speed 100",
+            action = function(args)
+                local newSpeed = tonumber(args)
+                if newSpeed and newSpeed >= 10 and newSpeed <= 500 then
+                    SPEED = newSpeed
+                    return "Speed set to " .. SPEED
+                else
+                    return "Invalid speed. Use a number between 10 and 500."
+                end
+            end
+        },
+        {
+            name = "/command",
+            description = "Show or hide this command list. You can also press the C key.",
+            action = function()
+                COMMAND_GUI_VISIBLE = not COMMAND_GUI_VISIBLE
+                return "Command list: " .. (COMMAND_GUI_VISIBLE and "SHOWN" or "HIDDEN")
+            end
+        },
+        {
+            name = "/reset",
+            description = "Reset all settings to default values.",
+            action = function()
+                FLYING = false
+                NOCLIP = false
+                SEA_MODE = false
+                SPEED = 50
+                stopFlying()
+                toggleNoclip()
+                toggleSeaMode()
+                return "All settings reset to default."
+            end
+        }
+    }
+end
+
+-- Chat command handling
+local function setupChatCommands()
+    player.Chatted:Connect(function(message)
+        local command, args = string.match(message, "^(/[%w]+)%s*(.*)")
+        
+        if not command then return end
+        
+        -- Process command
+        for _, cmd in ipairs(COMMANDS) do
+            local cmdName = string.match(cmd.name, "^(/[%w]+)")
+            if cmdName and cmdName:lower() == command:lower() then
+                local response = cmd.action(args)
+                print("[Command] " .. response)
+                return
+            end
         end
         
-        -- If health recovers above threshold and we have a saved position
-        if healthPercent > HEALTH_THRESHOLD and LAST_HEALTH_PERCENT <= HEALTH_THRESHOLD and SAVED_POSITION then
-            -- Teleport back to saved position
-            rootPart.CFrame = SAVED_POSITION
-            SAVED_POSITION = nil
+        -- Special case for /phase as an alias for /noclip
+        if command:lower() == "/phase" then
+            for _, cmd in ipairs(COMMANDS) do
+                if string.match(cmd.name, "^/noclip") then
+                    local response = cmd.action()
+                    print("[Command] " .. response)
+                    return
+                end
+            end
         end
-    end
-    
-    LAST_HEALTH_PERCENT = healthPercent
+    end)
 end
 
--- Main flying control loop
-local function flyLoop()
-    if not FLYING then return end
-    if not character or not rootPart then return end
-    
-    local camera = workspace.CurrentCamera
-    local lookVector = camera.CFrame.LookVector
-    local rightVector = camera.CFrame.RightVector
-    
-    -- Calculate movement direction
-    local moveDirection = Vector3.new(0, 0, 0)
-    
-    if UserInputService:IsKeyDown(Enum.KeyCode.W) then
-        moveDirection = moveDirection + lookVector
-    end
-    if UserInputService:IsKeyDown(Enum.KeyCode.S) then
-        moveDirection = moveDirection - lookVector
-    end
-    if UserInputService:IsKeyDown(Enum.KeyCode.A) then
-        moveDirection = moveDirection - rightVector
-    end
-    if UserInputService:IsKeyDown(Enum.KeyCode.D) then
-        moveDirection = moveDirection + rightVector
-    end
-    if UserInputService:IsKeyDown(Enum.KeyCode.Space) then
-        moveDirection = moveDirection + Vector3.new(0, 1, 0)
-    end
-    if UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then
-        moveDirection = moveDirection - Vector3.new(0, 1, 0)
-    end
-    
-    -- Normalize if there's movement
-    if moveDirection.Magnitude > 0 then
-        moveDirection = moveDirection.Unit
-    end
-    
-    -- Apply boost if shift is held
-    local currentSpeed = FLYING_SPEED
-    if UserInputService:IsKeyDown(BOOST_KEY) then
-        currentSpeed = FLYING_SPEED * BOOST_MULTIPLIER
-    end
-    
-    -- Update velocity
-    if flyVel then
-        flyVel.Velocity = moveDirection * currentSpeed
-    end
-    
-    -- Update gyro
-    if flyGyro then
-        if moveDirection.Magnitude > 0 then
-            flyGyro.CFrame = CFrame.lookAt(rootPart.Position, rootPart.Position + moveDirection)
-        else
-            flyGyro.CFrame = CFrame.lookAt(rootPart.Position, rootPart.Position + camera.CFrame.LookVector)
+-- Key bindings
+local function setupKeyBindings()
+    -- Flying toggle (F key)
+    ContextActionService:BindAction("ToggleFlying", function(_, inputState)
+        if inputState == Enum.UserInputState.Begin then
+            if FLYING then
+                stopFlying()
+            else
+                startFlying()
+            end
         end
-    end
+    end, false, Enum.KeyCode.F)
+    
+    -- Noclip toggle (X key)
+    ContextActionService:BindAction("ToggleNoclip", function(_, inputState)
+        if inputState == Enum.UserInputState.Begin then
+            toggleNoclip()
+        end
+    end, false, Enum.KeyCode.X)
+    
+    -- Speed adjustment (Q and E keys)
+    ContextActionService:BindAction("IncreaseSpeed", function(_, inputState)
+        if inputState == Enum.UserInputState.Begin then
+            SPEED = math.min(SPEED + 10, 500)
+        end
+    end, false, Enum.KeyCode.E)
+    
+    ContextActionService:BindAction("DecreaseSpeed", function(_, inputState)
+        if inputState == Enum.UserInputState.Begin then
+            SPEED = math.max(SPEED - 10, 10)
+        end
+    end, false, Enum.KeyCode.Q)
+    
+    -- Command list toggle (C key)
+    ContextActionService:BindAction("ToggleCommandList", function(_, inputState)
+        if inputState == Enum.UserInputState.Begin then
+            COMMAND_GUI_VISIBLE = not COMMAND_GUI_VISIBLE
+        end
+    end, false, Enum.KeyCode.C)
+    
+    -- SEA mode toggle (R key)
+    ContextActionService:BindAction("ToggleSeaMode", function(_, inputState)
+        if inputState == Enum.UserInputState.Begin then
+            toggleSeaMode()
+        end
+    end, false, Enum.KeyCode.R)
 end
 
--- Initialize
-local guiElements = createGui()
-
--- Connect player input
-UserInputService.InputBegan:Connect(function(input, gameProcessed)
-    if gameProcessed then return end
-    
-    if input.KeyCode == FLY_KEY then
-        FLYING = not FLYING
-        if FLYING then
-            setupFly()
-        else
-            stopFly()
-        end
-    elseif input.KeyCode == NOCLIP_KEY then
-        NOCLIP = not NOCLIP
-        updateNoclip()
-    elseif input.KeyCode == SEA_KEY then
-        SEA_MODE = not SEA_MODE
-        updateSeaMode()
-    elseif input.KeyCode == COMMAND_KEY then
-        toggleCommandList()
-    end
-end)
-
--- Connect chat
-player.Chatted:Connect(onChatted)
-
--- Main loop
-RunService.Heartbeat:Connect(function()
-    flyLoop()
-    monitorHealth()
-    
-    -- Ensure noclip stays active
-    if NOCLIP then
-        updateNoclip()
-    end
-    
-    -- SEA mode continuous teleport when health is low
-    if SEA_MODE and humanoid.Health / humanoid.MaxHealth * 100 <= HEALTH_THRESHOLD then
-        -- Continuously teleport upward
-        rootPart.CFrame = CFrame.new(rootPart.Position.X, rootPart.Position.Y + 10, rootPart.Position.Z)
-    end
-end)
-
--- Handle character respawn
-player.CharacterAdded:Connect(function(newCharacter)
-    character = newCharacter
+-- Character handling
+local function setupCharacter(char)
+    character = char
     humanoid = character:WaitForChild("Humanoid")
     rootPart = character:WaitForChild("HumanoidRootPart")
+    LAST_HEALTH = humanoid.Health
     
     -- Reset states
     FLYING = false
-    stopFly()
     NOCLIP = false
-    updateNoclip()
     SAVED_POSITION = nil
     
-    -- Reconnect health changed event
-    LAST_HEALTH_PERCENT = 100
-end)
+    -- Reset SEA mode if it was enabled
+    if SEA_MODE then
+        toggleSeaMode()
+        toggleSeaMode()
+    end
+    
+    -- Handle character death
+    humanoid.Died:Connect(function()
+        stopFlying()
+        if character._noclipConnection then
+            character._noclipConnection:Disconnect()
+            character._noclipConnection = nil
+        end
+        if character._healthConnection then
+            character._healthConnection:Disconnect()
+            character._healthConnection = nil
+        end
+    end)
+end
 
--- Notification
-StarterGui:SetCore("SendNotification", {
-    Title = "Flying Script Loaded",
-    Text = "Press F to fly, X for phase, C for SEA mode. Type /command for help.",
-    Duration = 5
-})
+-- Main initialization
+local function initialize()
+    print("Initializing Flying Script...")
+    
+    -- Setup commands
+    setupCommands()
+    
+    -- Create GUI
+    local gui = createGui()
+    
+    -- Populate command list
+    populateCommandList(gui)
+    
+    -- Setup chat commands
+    setupChatCommands()
+    
+    -- Setup key bindings
+    setupKeyBindings()
+    
+    -- Setup character
+    setupCharacter(character)
+    
+    -- Handle character added
+    player.CharacterAdded:Connect(setupCharacter)
+    
+    -- Update GUI periodically
+    RunService.Heartbeat:Connect(function()
+        updateGui(gui)
+        gui.commandFrame.Visible = COMMAND_GUI_VISIBLE
+    end)
+    
+    print("Flying Script initialized successfully!")
+    print("Press F to toggle flying, X for noclip, C for command list")
+end
 
-print("Flying Script with Enhanced Features loaded successfully!")
-print("Press F to toggle flying, X for phase, C for SEA mode")
-print("Type /command in chat to see all commands")
+-- Start the script
+initialize()
