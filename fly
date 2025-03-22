@@ -22,7 +22,6 @@ local baseSpeed = 20
 local speedMultiplier = 1
 local verticalSpeed = 0
 local seaUpDistance = 1000 -- Khoảng cách dịch chuyển lên khi Sea kích hoạt
-local returnHeightOffset = 50 -- Độ cao thêm khi quay lại vị trí ban đầu
 local bodyGyro, bodyVelocity
 local noclipConnection = nil
 local seaConnection = nil
@@ -219,7 +218,7 @@ local function showNotification(text, duration)
     notifText.TextSize = 14
     notifText.Parent = notif
     
-    -- Hiệu ứng xu��t hiện
+    -- Hiệu ứng xuất hiện
     notif.BackgroundTransparency = 1
     TweenService:Create(notif, TweenInfo.new(0.5), {BackgroundTransparency = 0.2}):Play()
     
@@ -426,10 +425,10 @@ local function toggleSea()
                     end
                 end
             elseif Humanoid.Health > (Humanoid.MaxHealth * 0.51) and isInEmergency then
-                -- Quay lại vị trí ban đầu nhưng cao hơn 50 block
+                -- Quay lại vị trí ban đầu khi máu đã hồi phục
                 if emergencyPosition then
-                    local returnPosition = emergencyPosition + Vector3.new(0, returnHeightOffset, 0)
-                    RootPart.CFrame = CFrame.new(returnPosition)
+                    local safePosition = emergencyPosition + Vector3.new(0, 50, 0)
+                    RootPart.CFrame = CFrame.new(safePosition)
                     isInEmergency = false
                     emergencyPosition = nil
                 end
@@ -445,10 +444,10 @@ local function toggleSea()
             seaConnection = nil
         end
         
-        -- Nếu đang trong trạng thái khẩn cấp, dịch chuyển về vị trí cũ nhưng cao hơn 50 block
+        -- Nếu đang trong trạng thái khẩn cấp, dịch chuyển về vị trí cũ
         if isInEmergency and emergencyPosition then
-            local returnPosition = emergencyPosition + Vector3.new(0, returnHeightOffset, 0)
-            RootPart.CFrame = CFrame.new(returnPosition)
+            local safePosition = emergencyPosition + Vector3.new(0, 50, 0)
+            RootPart.CFrame = CFrame.new(safePosition)
             isInEmergency = false
             emergencyPosition = nil
         end
@@ -520,7 +519,7 @@ local function toggleAuto()
     end
 end
 
--- Hệ thống bay nâng cao (đã điều chỉnh để bay theo hướng nhân vật + camera)
+-- Hệ thống bay nâng cao
 local function updateFlight()
     if not flying then return end
     
@@ -541,25 +540,14 @@ local function updateFlight()
         bodyVelocity.Velocity = direction * baseSpeed * speedMultiplier
         bodyGyro.CFrame = CFrame.new(RootPart.Position, targetPos)
     else
-        -- Xử lý bay thủ công (điều chỉnh để bay theo hướng nhân vật + camera)
+        -- Xử lý bay thủ công
         local cam = workspace.CurrentCamera
         local moveDir = Humanoid.MoveDirection
         
-        -- Kết hợp hướng nhìn của nhân vật và camera
-        local characterLook = RootPart.CFrame.LookVector
-        local cameraLook = cam.CFrame.LookVector
-        
-        -- Tính trọng số cho hướng nhìn (70% camera, 30% nhân vật)
-        local combinedLook = (cameraLook * 0.7 + characterLook * 0.3).Unit
-        local combinedRight = cam.CFrame.RightVector
-        
-        -- Tính toán vận tốc ngang dựa trên hướng kết hợp
-        local horizontalVel = Vector3.new(0, 0, 0)
-        
-        if moveDir.Magnitude > 0 then
-            -- Nếu có input di chuyển, sử dụng hướng di chuyển
-            horizontalVel = (combinedRight * moveDir.X + combinedLook * moveDir.Z) * baseSpeed * speedMultiplier
-        end
+        -- Tính toán vận tốc ngang dựa trên hướng camera
+        local right = cam.CFrame.RightVector
+        local look = cam.CFrame.LookVector
+        local horizontalVel = (right * moveDir.X + look * moveDir.Z) * baseSpeed * speedMultiplier
         
         -- Kết hợp vận tốc dọc từ nút UP/DOWN
         bodyVelocity.Velocity = Vector3.new(
@@ -568,13 +556,8 @@ local function updateFlight()
             horizontalVel.Z
         )
         
-        -- Cập nhật hướng nhìn theo hướng kết hợp
-        if moveDir.Magnitude > 0 then
-            local moveDirection = (combinedRight * moveDir.X + combinedLook * moveDir.Z).Unit
-            bodyGyro.CFrame = CFrame.lookAt(RootPart.Position, RootPart.Position + moveDirection)
-        else
-            bodyGyro.CFrame = CFrame.lookAt(RootPart.Position, RootPart.Position + combinedLook)
-        end
+        -- Cập nhật hướng nhìn theo camera
+        bodyGyro.CFrame = cam.CFrame
     end
 end
 
@@ -785,3 +768,4 @@ showNotification("Hệ thống bay nâng cao đã được khởi tạo!", 3)
 print("Hệ thống bay nâng cao đã được khởi tạo!")
 print("Nhấn F để bật/tắt bay, P để xuyên tường, M để hiện/ẩn menu")
 print("Gõ /command để xem danh sách lệnh đầy đủ")
+
